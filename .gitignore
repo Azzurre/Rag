@@ -1,0 +1,16 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Chroma local database
+chroma_db/
+
+# Environment variables / secrets
+.env
+
+# VS Code optional
+.vscode/
