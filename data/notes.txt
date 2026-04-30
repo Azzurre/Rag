@@ -7,3 +7,9 @@ storing them in a vector database, and retrieving the most relevant chunks when 
 
 This project uses Python, ChromaDB, SentenceTransformers, and Ollama.
 The goal is to showcase practical AI engineering skills for software developer and AI-related interviews.
+
+A RAG system works by loading documents, splitting them into smaller chunks, converting those chunks into embeddings, storing the embeddings in a vector database, retrieving the most relevant chunks for a user question, and sending those chunks to a language model to generate an answer.
+
+This project uses Python, ChromaDB, Hugging Face SentenceTransformers, and Ollama.
+
+The purpose of this project is to demonstrate practical AI engineering skills, including document processing, semantic search, vector databases, prompt construction, and local LLM integration.

@@ -1,10 +1,12 @@
 import os
 import chromadb
+import shutil
 from sentence_transformers import SentenceTransformer
 
 DATA_FOLDER = "data"
 DB_FOLDER = "chroma_db"
 COLLECTION_NAME = "my_documents"
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 def load_documents(folder_path):
     documents = []
@@ -33,7 +35,7 @@ def split_text(text, chunk_size=500, overlap=100):
 
 def main():
     print("Loading embedding model...")
-    embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
     
     print("Connectong to ChromaDB...")
     client = chromadb.PersistentClient(path=DB_FOLDER)
