@@ -1,0 +1,9 @@
+Dimitri is building a smart RAG assistant as a portfolio project.
+The assistant can read local documents and answer questions based on them.
+
+RAG stands for Retrieval Augmented Generation.
+It works by splitting documents into chunks, embedding those chunks into vectors,
+storing them in a vector database, and retrieving the most relevant chunks when a user asks a question.
+
+This project uses Python, ChromaDB, SentenceTransformers, and Ollama.
+The goal is to showcase practical AI engineering skills for software developer and AI-related interviews.
