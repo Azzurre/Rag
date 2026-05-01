@@ -231,6 +231,24 @@ def add_web_documents_to_chroma(documents, max_chunks_per_doc=5):
         "sources": learned_sources
     }
 
+def retrieve_web_chunks(question, top_k=5):
+    embedding_model = load_embedding_model()
+    collection = load_chroma_collection()
+
+    question_embedding = embedding_model.encode(question).tolist()
+
+    results = collection.query(
+        query_embeddings=[question_embedding],
+        n_results=top_k,
+        where={"source_type": "web"},
+        include=["documents", "metadatas", "distances"]
+    )
+
+    chunks = results["documents"][0] if results["documents"] else []
+    metadatas = results["metadatas"][0] if results["metadatas"] else []
+    distances = results["distances"][0] if results["distances"] else []
+
+    return chunks, metadatas, distances
 
 def answer_question(question):
     chunks, metadatas, distances = retrieve_relevant_chunks(question)
@@ -247,7 +265,7 @@ def answer_question(question):
         learned_from_web = add_web_documents_to_chroma(web_documents)
 
         if learned_from_web["chunks_added"] > 0:
-            chunks, metadatas, distances = retrieve_relevant_chunks(question)
+            chunks, metadatas, distances = retrieve_web_chunks(question)
 
     if not chunks:
         return (

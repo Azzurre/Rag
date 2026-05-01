@@ -2,7 +2,7 @@ from ddgs import DDGS
 from web_url_ingest import extract_text_from_url, save_web_article
 
 
-def search_duckduckgo(query, max_results=3):
+def search_duckduckgo(query, max_results=10):
     results = []
 
     with DDGS() as ddgs:
@@ -19,7 +19,6 @@ def search_duckduckgo(query, max_results=3):
 def build_search_query(query):
     query_lower = query.lower()
 
-    # Current / live UFC queries need schedule/card sources, not technique sources
     if "ufc" in query_lower and (
         "next" in query_lower
         or "upcoming" in query_lower
@@ -31,13 +30,12 @@ def build_search_query(query):
         or "today" in query_lower
         or "this weekend" in query_lower
     ):
-        return f"{query} UFC official events schedule fight card"
+        return f"{query} site:ufc.com/events OR ESPN UFC next event main card"
 
-    # Technique/training queries
     return f"{query} MMA boxing kickboxing Muay Thai grappling fight training technique"
 
 
-def search_and_extract_web_documents(query, max_results=3):
+def search_and_extract_web_documents(query, max_results=5):
     search_query = build_search_query(query)
 
     print(f"Search query: {search_query}")
@@ -47,21 +45,31 @@ def search_and_extract_web_documents(query, max_results=3):
     documents = []
 
     for result in results:
+        title = result.get("title", "Unknown search result")
         url = result.get("url")
+        snippet = result.get("body", "")
 
         if not url:
             continue
 
+        # Save the search result snippet as a document too
+        if snippet and len(snippet.strip()) > 50:
+            documents.append({
+                "title": f"Search result: {title}",
+                "url": url,
+                "text": f"Title: {title}\nURL: {url}\nSnippet: {snippet}"
+            })
+
         try:
             print(f"Extracting: {url}")
-            title, text = extract_text_from_url(url)
+            extracted_title, text = extract_text_from_url(url)
 
             if text and len(text.strip()) > 300:
-                save_web_article(url, title, text)
+                save_web_article(url, extracted_title, text)
                 print("Saved.")
 
                 documents.append({
-                    "title": title,
+                    "title": extracted_title,
                     "url": url,
                     "text": text
                 })
