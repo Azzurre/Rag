@@ -1,16 +1,22 @@
-import chromadb
-import ollama
 import uuid
 from datetime import datetime
-from web_search_ingest import search_and_extract_web_documents
+
+import chromadb
+import ollama
 import streamlit as st
 from sentence_transformers import SentenceTransformer
+
+from web_search_ingest import search_and_extract_web_documents
 
 
 DB_FOLDER = "chroma_db"
 COLLECTION_NAME = "my_documents"
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 LLM_MODEL_NAME = "llama3.2"
+
+# Lower = stricter, higher = more likely to trust local database.
+# If FightIQ searches the web too much, increase this to 1.1 or 1.2.
+# If FightIQ does not search web enough, decrease this to 0.7 or 0.8.
 LOCAL_CONFIDENCE_DISTANCE_THRESHOLD = 0.9
 
 
@@ -25,6 +31,22 @@ def load_chroma_collection():
     return client.get_or_create_collection(name=COLLECTION_NAME)
 
 
+def split_text(text, chunk_size=500, overlap=100):
+    chunks = []
+    start = 0
+
+    while start < len(text):
+        end = start + chunk_size
+        chunk = text[start:end].strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        start += chunk_size - overlap
+
+    return chunks
+
+
 def retrieve_relevant_chunks(question, top_k=3):
     embedding_model = load_embedding_model()
     collection = load_chroma_collection()
@@ -37,9 +59,9 @@ def retrieve_relevant_chunks(question, top_k=3):
         include=["documents", "metadatas", "distances"]
     )
 
-    chunks = results["documents"][0]
-    metadatas = results["metadatas"][0]
-    distances = results["distances"][0]
+    chunks = results["documents"][0] if results["documents"] else []
+    metadatas = results["metadatas"][0] if results["metadatas"] else []
+    distances = results["distances"][0] if results["distances"] else []
 
     return chunks, metadatas, distances
 
@@ -49,7 +71,13 @@ def build_prompt(question, chunks, metadatas):
 
     for i, chunk in enumerate(chunks):
         source = metadatas[i].get("source", "unknown")
-        context_parts.append(f"Source: {source}\nContent: {chunk}")
+        url = metadatas[i].get("url")
+
+        source_text = f"Source: {source}"
+        if url:
+            source_text += f"\nURL: {url}"
+
+        context_parts.append(f"{source_text}\nContent: {chunk}")
 
     context = "\n\n---\n\n".join(context_parts)
 
@@ -103,40 +131,61 @@ def create_preview(text, max_length=220):
 
     return cleaned[:max_length] + "..."
 
+
 def add_web_documents_to_chroma(documents, max_chunks_per_doc=5):
+    """
+    Takes documents returned by web_search_ingest.py and adds them directly to ChromaDB.
+    Expected document format:
+    {
+        "title": "...",
+        "url": "...",
+        "text": "..."
+    }
+    """
+
+    if not documents:
+        return {
+            "chunks_added": 0,
+            "sources": []
+        }
+
     embedding_model = load_embedding_model()
     collection = load_chroma_collection()
 
     total_chunks_added = 0
     learned_sources = []
-    
+
     for document in documents:
-        title = document["title"]
-        url = document["url"]
-        text = document["text"]
-        
+        title = document.get("title", "Unknown web source")
+        url = document.get("url", "")
+        text = document.get("text", "")
+
+        if not text.strip():
+            continue
+
         chunks = split_text(text)
-        
+
         ids = []
         documents_to_add = []
         metadatas = []
         embeddings = []
-        
+
         for chunk in chunks[:max_chunks_per_doc]:
             chunk_id = f"web_{uuid.uuid4()}"
-            
+
             ids.append(chunk_id)
             documents_to_add.append(chunk)
+
             metadatas.append({
                 "source": title,
                 "url": url,
                 "source_type": "web",
                 "learned_at": datetime.utcnow().isoformat()
             })
-            
+
             embedding = embedding_model.encode(chunk).tolist()
             embeddings.append(embedding)
-        
+
         if ids:
             collection.add(
                 ids=ids,
@@ -144,17 +193,20 @@ def add_web_documents_to_chroma(documents, max_chunks_per_doc=5):
                 metadatas=metadatas,
                 embeddings=embeddings
             )
+
             total_chunks_added += len(ids)
+
             learned_sources.append({
                 "title": title,
                 "url": url,
                 "chunks_added": len(ids)
             })
-            
-        return {
-            "total_chunks_added": total_chunks_added,
-            "sources": learned_sources
-        }
+
+    return {
+        "chunks_added": total_chunks_added,
+        "sources": learned_sources
+    }
+
 
 def answer_question(question):
     chunks, metadatas, distances = retrieve_relevant_chunks(question)
@@ -170,7 +222,15 @@ def answer_question(question):
 
         learned_from_web = add_web_documents_to_chroma(web_documents)
 
-        chunks, metadatas, distances = retrieve_relevant_chunks(question)
+        if learned_from_web["chunks_added"] > 0:
+            chunks, metadatas, distances = retrieve_relevant_chunks(question)
+
+    if not chunks:
+        return (
+            "I do not have enough information in the provided fight knowledge base.",
+            [],
+            learned_from_web
+        )
 
     prompt = build_prompt(question, chunks, metadatas)
     answer = ask_llm(prompt)
@@ -182,7 +242,7 @@ def answer_question(question):
         url = metadata.get("url", None)
         source_type = metadata.get("source_type", "local")
         preview = create_preview(chunks[index])
-        distance = distances[index]
+        distance = distances[index] if index < len(distances) else 999
 
         sources.append({
             "source": source,
@@ -195,6 +255,22 @@ def answer_question(question):
     return answer, sources, learned_from_web
 
 
+def display_sources(sources):
+    if not sources:
+        st.write("No sources found.")
+        return
+
+    for i, source in enumerate(sources, start=1):
+        st.markdown(f"**{i}. {source['source']}**")
+        st.write(f"Type: `{source['source_type']}`")
+        st.write(f"Relevance distance: `{source['distance']:.4f}`")
+
+        if source.get("url"):
+            st.write(source["url"])
+
+        st.write(source["preview"])
+
+
 def main():
     st.set_page_config(
         page_title="FightIQ",
@@ -203,13 +279,17 @@ def main():
     )
 
     st.title("🥊 FightIQ")
-    st.caption("A local RAG assistant for MMA, boxing, kickboxing, Muay Thai, grappling, and fight training.")
+    st.caption(
+        "A local-first RAG assistant for MMA, boxing, kickboxing, Muay Thai, "
+        "grappling, and fight training."
+    )
 
     with st.sidebar:
         st.header("About")
         st.write(
             "FightIQ answers questions using your local combat sports knowledge base. "
-            "It retrieves relevant chunks from ChromaDB and uses a local Ollama model to generate grounded answers."
+            "If the local database does not have a strong match, it can search the web, "
+            "learn from extracted web sources, and answer using the updated database."
         )
 
         st.divider()
@@ -219,6 +299,13 @@ def main():
         st.write("- How do I defend in the Muay Thai clinch?")
         st.write("- Why is the jab important?")
         st.write("- How should a beginner structure MMA training?")
+        st.write("- How do I defend a calf kick?")
+
+        st.divider()
+
+        st.subheader("Settings")
+        st.write(f"Local confidence threshold: `{LOCAL_CONFIDENCE_DISTANCE_THRESHOLD}`")
+        st.caption("Lower distance means a stronger match.")
 
         st.divider()
 
@@ -233,12 +320,16 @@ def main():
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-            if message["role"] == "assistant" and "sources" in message:
-                with st.expander("Sources used"):
-                    for i, source in enumerate(message["sources"], start=1):
-                        st.markdown(f"**{i}. {source['source']}**")
-                        st.write(f"Relevance distance: `{source['distance']:.4f}`")
-                        st.write(source["preview"])
+            if message["role"] == "assistant":
+                if message.get("learned_from_web") and message["learned_from_web"]["chunks_added"] > 0:
+                    st.info(
+                        f"FightIQ searched the web and learned from "
+                        f"{len(message['learned_from_web']['sources'])} source(s)."
+                    )
+
+                if "sources" in message:
+                    with st.expander("Sources used"):
+                        display_sources(message["sources"])
 
     user_question = st.chat_input("Ask FightIQ something...")
 
@@ -256,28 +347,21 @@ def main():
                 answer, sources, learned_from_web = answer_question(user_question)
 
             st.write(answer)
-            
+
             if learned_from_web and learned_from_web["chunks_added"] > 0:
                 st.info(
                     f"FightIQ searched the web and learned from "
                     f"{len(learned_from_web['sources'])} source(s)."
                 )
 
-        with st.expander("Sources used"):
-            for i, source in enumerate(sources, start=1):
-                st.markdown(f"**{i}. {source['source']}**")
-                st.write(f"Type: `{source['source_type']}`")
-                st.write(f"Relevance distance: `{source['distance']:.4f}`")
-
-                if source.get("url"):
-                    st.write(source["url"])
-
-                st.write(source["preview"])
+            with st.expander("Sources used"):
+                display_sources(sources)
 
         st.session_state.messages.append({
             "role": "assistant",
             "content": answer,
-            "sources": sources
+            "sources": sources,
+            "learned_from_web": learned_from_web
         })
 
 
