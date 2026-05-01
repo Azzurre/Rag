@@ -1,5 +1,8 @@
 import chromadb
 import ollama
+import uuid
+from datetime import datetime
+from web_search_ingest import search_and_extract_web_documents
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 
@@ -8,6 +11,7 @@ DB_FOLDER = "chroma_db"
 COLLECTION_NAME = "my_documents"
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 LLM_MODEL_NAME = "llama3.2"
+LOCAL_CONFIDENCE_DISTANCE_THRESHOLD = 0.9
 
 
 @st.cache_resource
@@ -99,9 +103,75 @@ def create_preview(text, max_length=220):
 
     return cleaned[:max_length] + "..."
 
+def add_web_documents_to_chroma(documents, max_chunks_per_doc=5):
+    embedding_model = load_embedding_model()
+    collection = load_chroma_collection()
+
+    total_chunks_added = 0
+    learned_sources = []
+    
+    for document in documents:
+        title = document["title"]
+        url = document["url"]
+        text = document["text"]
+        
+        chunks = split_text(text)
+        
+        ids = []
+        documents_to_add = []
+        metadatas = []
+        embeddings = []
+        
+        for chunk in chunks[:max_chunks_per_doc]:
+            chunk_id = f"web_{uuid.uuid4()}"
+            
+            ids.append(chunk_id)
+            documents_to_add.append(chunk)
+            metadatas.append({
+                "source": title,
+                "url": url,
+                "source_type": "web",
+                "learned_at": datetime.utcnow().isoformat()
+            })
+            
+            embedding = embedding_model.encode(chunk).tolist()
+            embeddings.append(embedding)
+        
+        if ids:
+            collection.add(
+                ids=ids,
+                documents=documents_to_add,
+                metadatas=metadatas,
+                embeddings=embeddings
+            )
+            total_chunks_added += len(ids)
+            learned_sources.append({
+                "title": title,
+                "url": url,
+                "chunks_added": len(ids)
+            })
+            
+        return {
+            "total_chunks_added": total_chunks_added,
+            "sources": learned_sources
+        }
 
 def answer_question(question):
     chunks, metadatas, distances = retrieve_relevant_chunks(question)
+
+    best_distance = distances[0] if distances else 999
+    learned_from_web = None
+
+    if best_distance > LOCAL_CONFIDENCE_DISTANCE_THRESHOLD:
+        web_documents = search_and_extract_web_documents(
+            query=question,
+            max_results=3
+        )
+
+        learned_from_web = add_web_documents_to_chroma(web_documents)
+
+        chunks, metadatas, distances = retrieve_relevant_chunks(question)
+
     prompt = build_prompt(question, chunks, metadatas)
     answer = ask_llm(prompt)
 
@@ -109,16 +179,20 @@ def answer_question(question):
 
     for index, metadata in enumerate(metadatas):
         source = metadata.get("source", "unknown")
+        url = metadata.get("url", None)
+        source_type = metadata.get("source_type", "local")
         preview = create_preview(chunks[index])
         distance = distances[index]
 
         sources.append({
             "source": source,
+            "url": url,
+            "source_type": source_type,
             "preview": preview,
             "distance": distance
         })
 
-    return answer, sources
+    return answer, sources, learned_from_web
 
 
 def main():
@@ -179,15 +253,26 @@ def main():
 
         with st.chat_message("assistant"):
             with st.spinner("Retrieving fight knowledge and generating answer..."):
-                answer, sources = answer_question(user_question)
+                answer, sources, learned_from_web = answer_question(user_question)
 
             st.write(answer)
+            
+            if learned_from_web and learned_from_web["chunks_added"] > 0:
+                st.info(
+                    f"FightIQ searched the web and learned from "
+                    f"{len(learned_from_web['sources'])} source(s)."
+                )
 
-            with st.expander("Sources used"):
-                for i, source in enumerate(sources, start=1):
-                    st.markdown(f"**{i}. {source['source']}**")
-                    st.write(f"Relevance distance: `{source['distance']:.4f}`")
-                    st.write(source["preview"])
+        with st.expander("Sources used"):
+            for i, source in enumerate(sources, start=1):
+                st.markdown(f"**{i}. {source['source']}**")
+                st.write(f"Type: `{source['source_type']}`")
+                st.write(f"Relevance distance: `{source['distance']:.4f}`")
+
+                if source.get("url"):
+                    st.write(source["url"])
+
+                st.write(source["preview"])
 
         st.session_state.messages.append({
             "role": "assistant",

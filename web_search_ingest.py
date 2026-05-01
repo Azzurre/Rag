@@ -15,6 +15,30 @@ def search_duckduckgo(query, max_results=3):
 
     return results
 
+def search_and_extract_web_documents(query, max_results=3):
+    search_query = f"{query} MMA boxing kickboxing Muay Thai technique"
+    results = search_duckduckgo(search_query, max_results=max_results)
+
+    documents = []
+    
+    for result in results:
+        url = result["url"]
+
+        try:
+            print(f"Extracting: {url}")
+            title, text = extract_text_from_url(url)
+
+            if text and len(text.strip()) > 300:
+                save_web_article(url, title, text)
+                print("Saved.")
+                documents.append({
+                    "title": title,
+                    "url": url,
+                    "text": text
+                })
+
+        except Exception as error:
+            print(f"Skipped due to error: {error}")
 
 def main():
     query = input("Search fight knowledge on the web: ").strip()
