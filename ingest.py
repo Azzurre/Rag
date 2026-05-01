@@ -11,12 +11,13 @@ EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 def load_documents(folder_path):
     documents = []
     
-    for filename in os.listdir(folder_path):
-        if filename.endswith(".txt"):
-            file_path = os.path.join(folder_path, filename)
-            with open(file_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-                documents.append({
+    for root, dirs, files in os.walk(folder_path):
+        for filename in files:
+            if filename.endswith(".txt"):
+                file_path = os.path.join(root, filename)
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    content = file.read()
+                    documents.append({
                     "id": filename,
                     "text": content
                 })
