@@ -108,6 +108,30 @@ Answer:
 
     return prompt
 
+def should_force_web_search(question):
+    live_keywords = [
+        "next ufc",
+        "upcoming ufc",
+        "ufc card",
+        "fight card",
+        "who is fighting",
+        "who's fighting",
+        "latest",
+        "today",
+        "tonight",
+        "tomorrow",
+        "this weekend",
+        "schedule",
+        "results",
+        "rankings",
+        "who won",
+        "last night"
+    ]
+
+    question_lower = question.lower()
+
+    return any(keyword in question_lower for keyword in live_keywords)
+
 
 def ask_llm(prompt):
     response = ollama.chat(
@@ -214,7 +238,7 @@ def answer_question(question):
     best_distance = distances[0] if distances else 999
     learned_from_web = None
 
-    if best_distance > LOCAL_CONFIDENCE_DISTANCE_THRESHOLD:
+    if should_force_web_search(question) or best_distance > LOCAL_CONFIDENCE_DISTANCE_THRESHOLD:
         web_documents = search_and_extract_web_documents(
             query=question,
             max_results=3
